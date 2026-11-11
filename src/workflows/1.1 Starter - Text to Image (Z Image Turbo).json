@@ -1,0 +1,161 @@
+{
+  "76": {
+    "inputs": {
+      "filename_prefix": "comfyui-airport-editorial",
+      "images": [
+        "30:43",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.71"
+    }
+  },
+  "30:47": {
+    "inputs": {
+      "shift": 3,
+      "sampling": "flow",
+      "model": [
+        "30:46",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.64"
+    }
+  },
+  "30:42": {
+    "inputs": {
+      "conditioning": [
+        "30:45",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.73"
+    }
+  },
+  "30:46": {
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.73"
+    }
+  },
+  "30:39": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.73"
+    }
+  },
+  "30:40": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.73"
+    }
+  },
+  "30:41": {
+    "inputs": {
+      "width": 1920,
+      "height": 1088,
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "EmptySD3LatentImage",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.64"
+    }
+  },
+  "30:43": {
+    "inputs": {
+      "samples": [
+        "30:44",
+        0
+      ],
+      "vae": [
+        "30:40",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.64"
+    }
+  },
+  "30:45": {
+    "inputs": {
+      "text": "High-fashion editorial tight portrait, ultra-crisp detail\nclean modern sheen, faint high-key digital gloss\nhyper-saturated pale-lilac flat sky background\nharsh unfiltered desert noon glare\nfemale model standing, subtle head tilt to the side\ncalm yet piercing direct eye contact, quiet self-assured intensity\nexpression of someone who just solved a complex node chain perfectly\nglossy dark-chocolate brown medium-length hair\nsoft centre-part, slight forward-falling fringe, air-dried natural texture\nhair tucked behind one ear revealing matte-black wireless earbud\nthin matte-black sports headband pushed up on forehead\noff-white/bone technical half-zip mock-neck pullover\nprominent tiny tonal micro-raised “comfy” monospaced embroidery on right chest\nlayered semi-sheer pale-grey long-sleeve base tee\nvery faint terminal-green command-line micro-grid subtly visible through top\nlow-rise wide-leg washed charcoal parachute-nylon track pants, tonal drawcord, slightly open zip cargo pocket showing phone edge, exposed toned midriff + iliac line",
+      "clip": [
+        "30:39",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.73"
+    }
+  },
+  "30:44": {
+    "inputs": {
+      "seed": 336703310549440,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "30:47",
+        0
+      ],
+      "positive": [
+        "30:45",
+        0
+      ],
+      "negative": [
+        "30:42",
+        0
+      ],
+      "latent_image": [
+        "30:41",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.64"
+    }
+  }
+}

@@ -1,0 +1,368 @@
+{
+  "manifest_version": "1.0",
+  "workflow_file": "1.1 Starter - Text to Image (Z Image Turbo).json",
+  "meta": {
+    "id": "z-image-turbo-starter",
+    "title": "1.1 Starter - Text to Image (Z Image Turbo)",
+    "short_title": "Z Image Turbo",
+    "category": "Text to Image",
+    "badge": "TURBO • 8 STEPS",
+    "description": "Ultra-fast AuraFlow / Lumina2 high-fashion editorial generator powered by Z-Image Turbo BF16.",
+    "accent_color": "#10b981"
+  },
+  "controls": [
+    {
+      "id": "prompt_text",
+      "group": "primary",
+      "component": "textarea",
+      "label": "Editorial Prompt",
+      "description": "Describe lighting, subject, styling, and atmosphere",
+      "target_node": "30:45",
+      "target_field": "inputs.text",
+      "rows": 5,
+      "default": "High-fashion editorial tight portrait, ultra-crisp detail\nclean modern sheen, faint high-key digital gloss\nhyper-saturated pale-lilac flat sky background\nharsh unfiltered desert noon glare\nfemale model standing, subtle head tilt to the side\ncalm yet piercing direct eye contact, quiet self-assured intensity\nexpression of someone who just solved a complex node chain perfectly\nglossy dark-chocolate brown medium-length hair\nsoft centre-part, slight forward-falling fringe, air-dried natural texture\nhair tucked behind one ear revealing matte-black wireless earbud\nthin matte-black sports headband pushed up on forehead\noff-white/bone technical half-zip mock-neck pullover\nprominent tiny tonal micro-raised “comfy” monospaced embroidery on right chest\nlayered semi-sheer pale-grey long-sleeve base tee\nvery faint terminal-green command-line micro-grid subtly visible through top\nlow-rise wide-leg washed charcoal parachute-nylon track pants, tonal drawcord, slightly open zip cargo pocket showing phone edge, exposed toned midriff + iliac line"
+    },
+    {
+      "id": "aspect_ratio",
+      "group": "primary",
+      "component": "aspect_picker",
+      "label": "Canvas Format",
+      "target_node": "30:41",
+      "width_field": "inputs.width",
+      "height_field": "inputs.height",
+      "default": {
+        "width": 1920,
+        "height": 1088,
+        "id": "16:9"
+      },
+      "presets": [
+        {
+          "id": "16:9",
+          "label": "Cinema 16:9",
+          "sub": "1920×1088",
+          "width": 1920,
+          "height": 1088
+        },
+        {
+          "id": "1:1",
+          "label": "Square 1:1",
+          "sub": "1024×1024",
+          "width": 1024,
+          "height": 1024
+        },
+        {
+          "id": "9:16",
+          "label": "Story 9:16",
+          "sub": "1088×1920",
+          "width": 1088,
+          "height": 1920
+        },
+        {
+          "id": "4:3",
+          "label": "Editorial 4:3",
+          "sub": "1408×1024",
+          "width": 1408,
+          "height": 1024
+        }
+      ]
+    },
+    {
+      "id": "steps",
+      "group": "primary",
+      "component": "slider",
+      "label": "Sampling Steps",
+      "target_node": "30:44",
+      "target_field": "inputs.steps",
+      "min": 1,
+      "max": 30,
+      "step": 1,
+      "default": 8,
+      "unit": "steps"
+    },
+    {
+      "id": "seed",
+      "group": "primary",
+      "component": "seed",
+      "label": "Generation Seed",
+      "target_node": "30:44",
+      "target_field": "inputs.seed",
+      "default": 336703310549440,
+      "randomize_by_default": true
+    },
+    {
+      "id": "cfg",
+      "group": "tuning",
+      "component": "slider",
+      "label": "CFG Guidance Scale",
+      "target_node": "30:44",
+      "target_field": "inputs.cfg",
+      "min": 1,
+      "max": 10,
+      "step": 0.5,
+      "default": 1
+    },
+    {
+      "id": "aura_shift",
+      "group": "tuning",
+      "component": "slider",
+      "label": "AuraFlow Shift",
+      "target_node": "30:47",
+      "target_field": "inputs.shift",
+      "min": 0.5,
+      "max": 10,
+      "step": 0.5,
+      "default": 3
+    },
+    {
+      "id": "batch_size",
+      "group": "tuning",
+      "component": "slider",
+      "label": "Batch Count",
+      "target_node": "30:41",
+      "target_field": "inputs.batch_size",
+      "min": 1,
+      "max": 4,
+      "step": 1,
+      "default": 1
+    },
+    {
+      "id": "unet_name",
+      "group": "advanced",
+      "component": "model_dropdown",
+      "label": "Diffusion UNET Model",
+      "target_node": "30:46",
+      "target_field": "inputs.unet_name",
+      "object_info_class": "UNETLoader",
+      "object_info_param": "unet_name",
+      "default": "z_image_turbo_bf16.safetensors",
+      "options": [
+        "z_image_turbo_bf16.safetensors",
+        "flux1-dev-fp8.safetensors",
+        "lumina_next_t2i.safetensors"
+      ]
+    },
+    {
+      "id": "sampler_name",
+      "group": "advanced",
+      "component": "dropdown",
+      "label": "Sampler Algorithm",
+      "target_node": "30:44",
+      "target_field": "inputs.sampler_name",
+      "default": "res_multistep",
+      "options": [
+        "res_multistep",
+        "euler",
+        "euler_ancestral",
+        "dpmpp_2m",
+        "dpmpp_2m_sde",
+        "uni_pc"
+      ]
+    },
+    {
+      "id": "scheduler",
+      "group": "advanced",
+      "component": "dropdown",
+      "label": "Scheduler",
+      "target_node": "30:44",
+      "target_field": "inputs.scheduler",
+      "default": "simple",
+      "options": [
+        "simple",
+        "normal",
+        "karras",
+        "exponential",
+        "sgm_uniform",
+        "beta"
+      ]
+    },
+    {
+      "id": "filename_prefix",
+      "group": "advanced",
+      "component": "text",
+      "label": "Output Filename Prefix",
+      "target_node": "76",
+      "target_field": "inputs.filename_prefix",
+      "default": "comfyui-airport-editorial"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "main_media_output",
+      "target_node": "76",
+      "media_type": "any_media",
+      "supported_extensions": [
+        "png",
+        "jpg",
+        "jpeg",
+        "webp",
+        "gif",
+        "mp4",
+        "webm",
+        "wav",
+        "mp3"
+      ],
+      "label": "Rendered Media Output"
+    }
+  ],
+  "_embedded_workflow_api": {
+    "76": {
+      "inputs": {
+        "filename_prefix": "comfyui-airport-editorial",
+        "images": [
+          "30:43",
+          0
+        ]
+      },
+      "class_type": "SaveImage",
+      "_meta": {
+        "title": "Save Image",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.71"
+      }
+    },
+    "30:47": {
+      "inputs": {
+        "shift": 3,
+        "sampling": "flow",
+        "model": [
+          "30:46",
+          0
+        ]
+      },
+      "class_type": "ModelSamplingAuraFlow",
+      "_meta": {
+        "title": "ModelSamplingAuraFlow",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64"
+      }
+    },
+    "30:42": {
+      "inputs": {
+        "conditioning": [
+          "30:45",
+          0
+        ]
+      },
+      "class_type": "ConditioningZeroOut",
+      "_meta": {
+        "title": "Conditioning Zero Out",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73"
+      }
+    },
+    "30:46": {
+      "inputs": {
+        "unet_name": "z_image_turbo_bf16.safetensors",
+        "weight_dtype": "default"
+      },
+      "class_type": "UNETLoader",
+      "_meta": {
+        "title": "Load Diffusion Model",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73"
+      }
+    },
+    "30:39": {
+      "inputs": {
+        "clip_name": "qwen_3_4b.safetensors",
+        "type": "lumina2",
+        "device": "default"
+      },
+      "class_type": "CLIPLoader",
+      "_meta": {
+        "title": "Load CLIP",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73"
+      }
+    },
+    "30:40": {
+      "inputs": {
+        "vae_name": "ae.safetensors"
+      },
+      "class_type": "VAELoader",
+      "_meta": {
+        "title": "Load VAE",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73"
+      }
+    },
+    "30:41": {
+      "inputs": {
+        "width": 1920,
+        "height": 1088,
+        "batch_size": 1
+      },
+      "class_type": "EmptySD3LatentImage",
+      "_meta": {
+        "title": "EmptySD3LatentImage",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64"
+      }
+    },
+    "30:43": {
+      "inputs": {
+        "samples": [
+          "30:44",
+          0
+        ],
+        "vae": [
+          "30:40",
+          0
+        ]
+      },
+      "class_type": "VAEDecode",
+      "_meta": {
+        "title": "VAE Decode",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64"
+      }
+    },
+    "30:45": {
+      "inputs": {
+        "text": "High-fashion editorial tight portrait, ultra-crisp detail\nclean modern sheen, faint high-key digital gloss\nhyper-saturated pale-lilac flat sky background\nharsh unfiltered desert noon glare\nfemale model standing, subtle head tilt to the side\ncalm yet piercing direct eye contact, quiet self-assured intensity\nexpression of someone who just solved a complex node chain perfectly\nglossy dark-chocolate brown medium-length hair\nsoft centre-part, slight forward-falling fringe, air-dried natural texture\nhair tucked behind one ear revealing matte-black wireless earbud\nthin matte-black sports headband pushed up on forehead\noff-white/bone technical half-zip mock-neck pullover\nprominent tiny tonal micro-raised “comfy” monospaced embroidery on right chest\nlayered semi-sheer pale-grey long-sleeve base tee\nvery faint terminal-green command-line micro-grid subtly visible through top\nlow-rise wide-leg washed charcoal parachute-nylon track pants, tonal drawcord, slightly open zip cargo pocket showing phone edge, exposed toned midriff + iliac line",
+        "clip": [
+          "30:39",
+          0
+        ]
+      },
+      "class_type": "CLIPTextEncode",
+      "_meta": {
+        "title": "CLIP Text Encode (Prompt)",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73"
+      }
+    },
+    "30:44": {
+      "inputs": {
+        "seed": 336703310549440,
+        "steps": 8,
+        "cfg": 1,
+        "sampler_name": "res_multistep",
+        "scheduler": "simple",
+        "denoise": 1,
+        "model": [
+          "30:47",
+          0
+        ],
+        "positive": [
+          "30:45",
+          0
+        ],
+        "negative": [
+          "30:42",
+          0
+        ],
+        "latent_image": [
+          "30:41",
+          0
+        ]
+      },
+      "class_type": "KSampler",
+      "_meta": {
+        "title": "KSampler",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64"
+      }
+    }
+  }
+}
