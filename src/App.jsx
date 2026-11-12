@@ -4,25 +4,29 @@ import {
   ChevronLeft,
   Check,
   Copy,
-  X
+  X,
+  Upload,
+  FileJson
 } from 'lucide-react';
 import CompactAccordionHeader from './components/CompactAccordianHeader';
 import ManifestControlField from './components/ManifestControlField';
 import LeftWorkflowsDrawer from './components/LeftWorkflowsDrawer';
 import RightOutputsDrawer from './components/RightOutputsDrawer';
-import STARTER_MANIFEST_JSON from './workflows/1.1 Starter - Text to Image (Z Image Turbo).manifest.json';
-import STARTER_WORKFLOW_API_JSON from './workflows/1.1 Starter - Text to Image (Z Image Turbo).json';
 import {
   generateClientId,
   detectMediaCategory,
+  loadPairedWorkflowsFromDisk,
+  compileWorkflowFromManifest,
+  extractWorkflowRunMeta,
   createSimulatedBatchSvgBlob,
-  comfyOutputDB
+  comfyOutputDB,
+  comfyWorkflowDB
 } from './Utils';
 
 export default function App() {
   // Step 0: Endpoint & Health State
-  const [endpointInput, setEndpointInput] = useState('https://hoxabel--modal-comfyui-comfygpu-ui-dev.us-east.modal.run');
-  const [cleanEndpoint, setCleanEndpoint] = useState('https://hoxabel--modal-comfyui-comfygpu-ui-dev.us-east.modal.run');
+  const [endpointInput, setEndpointInput] = useState('http://127.0.0.1:8188');
+  const [cleanEndpoint, setCleanEndpoint] = useState('http://127.0.0.1:8188');
   const [connectionStatus, setConnectionStatus] = useState('offline');
   const [statusMessage, setStatusMessage] = useState('Offline • Waiting for ComfyUI');
   const [latencyMs, setLatencyMs] = useState(null);
@@ -31,19 +35,13 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState({});
   const clientIdRef = useRef(generateClientId());
   const wsRef = useRef(null);
-  const lastRunMetaRef = useRef({ seed: null, resolution: '1920×1088' });
+  const lastRunMetaRef = useRef({ seed: null, resolution: 'Output' });
 
-  // Step 1: Workflows Directory & Sliding Drawers State
-  const [workflowLibrary, setWorkflowLibrary] = useState([
-    {
-      id: STARTER_MANIFEST_JSON.meta.id,
-      filename: '1.1 Starter - Text to Image (Z Image Turbo).json',
-      manifestFilename: '1.1 Starter - Text to Image (Z Image Turbo).manifest.json',
-      manifest: STARTER_MANIFEST_JSON,
-      workflowApi: STARTER_WORKFLOW_API_JSON
-    }
-  ]);
-  const [activeWorkflowId, setActiveWorkflowId] = useState(STARTER_MANIFEST_JSON.meta.id);
+  // Step 1: Auto-Discovered Built-In Workflows + IndexedDB Custom Workflows
+  const builtInWorkflows = useMemo(() => loadPairedWorkflowsFromDisk(), []);
+  const [workflowLibrary, setWorkflowLibrary] = useState(builtInWorkflows);
+  const [activeWorkflowId, setActiveWorkflowId] = useState(builtInWorkflows[0]?.id || '');
+
   const [showLeftDrawer, setShowLeftDrawer] = useState(false);
   const [showRightDrawer, setShowRightDrawer] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -63,17 +61,24 @@ export default function App() {
     {
       time: new Date().toLocaleTimeString(),
       type: 'info',
-      msg: 'Initialized mobile SDUI + IndexedDB comfy_outputs store'
+      msg: `Loaded ${builtInWorkflows.length} built-in workflow(s) from src/workflows/`
     }
   ]);
 
   const [comfyOutputsGallery, setComfyOutputsGallery] = useState([]);
   const [activeMediaOutput, setActiveMediaOutput] = useState(null);
   const [galleryLimit, setGalleryLimit] = useState(12);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
 
-  // Import Modal State
+  // Uploaded Input Media Previews (keyed by `${workflowId}:${controlId}`)
+  const [uploadedPreviews, setUploadedPreviews] = useState({});
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  // Import Modal State (Supports both File Picker & Raw Text)
   const [importManifestText, setImportManifestText] = useState('');
   const [importWorkflowText, setImportWorkflowText] = useState('');
+  const [manifestFileName, setManifestFileName] = useState('');
+  const [workflowFileName, setWorkflowFileName] = useState('');
   const [importError, setImportError] = useState('');
   const [copiedFlag, setCopiedFlag] = useState(false);
 
@@ -82,16 +87,105 @@ export default function App() {
     [workflowLibrary, activeWorkflowId]
   );
 
+  // Resolve human-readable node title from workflowApi._meta.title or class_type
+  const executingNodeName = useMemo(() => {
+    if (!executingNodeId) return 'Queued • Preparing Pipeline...';
+    const nodeObj = activeEntry?.workflowApi?.[executingNodeId];
+    if (nodeObj?._meta?.title) return nodeObj._meta.title;
+    if (nodeObj?.class_type) return nodeObj.class_type;
+    return `Node ${executingNodeId}`;
+  }, [activeEntry, executingNodeId]);
+
   const addLog = useCallback((type, msg) => {
     setDevLogs((prev) => [{ time: new Date().toLocaleTimeString(), type, msg }, ...prev.slice(0, 49)]);
   }, []);
 
-  // Load default values from paired manifest
+  // Load persisted user-imported workflows from IndexedDB on startup
+  useEffect(() => {
+    let mounted = true;
+    comfyWorkflowDB
+      .loadCustomWorkflows()
+      .then((savedCustomList) => {
+        if (!mounted || savedCustomList.length === 0) return;
+        setWorkflowLibrary([...builtInWorkflows, ...savedCustomList]);
+        addLog(
+          'info',
+          `Restored ${savedCustomList.length} custom workflow(s) from device IndexedDB`
+        );
+      })
+      .catch((err) => addLog('error', `Custom workflows load error: ${err.message}`));
+
+    return () => {
+      mounted = false;
+    };
+  }, [builtInWorkflows, addLog]);
+
+  // Upload any input media (image, video, audio) with unique filename + automatic prompt cache-busting
+  const handleUploadInputMedia = useCallback(
+    async (controlId, file) => {
+      if (!activeEntry) return;
+      const previewKey = `${activeEntry.id}:${controlId}`;
+      const localPreview = URL.createObjectURL(file);
+      setUploadedPreviews((prev) => ({ ...prev, [previewKey]: localPreview }));
+
+      // Helper that updates the image filename AND toggles an invisible trailing space
+      // on prompt textareas so ComfyUI's CLIPTextEncode / Flux2KleinEnhancer cache invalidates
+      const applyNewMediaWithCacheBust = (filenameToSet) => {
+        setFormValues((prev) => {
+          const next = { ...prev, [controlId]: filenameToSet };
+          (activeEntry.manifest.controls || []).forEach((ctrl) => {
+            if (ctrl.component === 'textarea') {
+              const currentText = String(next[ctrl.id] ?? ctrl.default ?? '');
+              next[ctrl.id] = currentText.endsWith(' ')
+                ? currentText.trimEnd()
+                : `${currentText} `;
+            }
+          });
+          return next;
+        });
+      };
+
+      if (connectionStatus !== 'online' && connectionStatus !== 'http_only') {
+        applyNewMediaWithCacheBust(file.name);
+        addLog('info', `Staged local file (${file.name}) for Sandbox mode`);
+        return;
+      }
+
+      setIsUploadingImage(true);
+      try {
+        // Prefix with Date.now() so LoadImage (Node 151) always sees a brand-new filename
+        const safeBaseName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const uniqueFilename = `${Date.now()}_${safeBaseName}`;
+
+        const formData = new FormData();
+        formData.append('image', file, uniqueFilename);
+        formData.append('overwrite', 'true');
+
+        const res = await fetch(`${cleanEndpoint}/upload/image`, {
+          method: 'POST',
+          body: formData
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const serverFilename = data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
+
+        applyNewMediaWithCacheBust(serverFilename);
+        addLog('success', `Uploaded input file to ComfyUI: ${serverFilename}`);
+      } catch (err) {
+        addLog('error', `File upload failed: ${err.message}`);
+      } finally {
+        setIsUploadingImage(false);
+      }
+    },
+    [activeEntry, connectionStatus, cleanEndpoint, addLog]
+  );
+
+  // Load default values from paired manifest whenever active workflow changes
   useEffect(() => {
     if (!activeEntry) return;
     const initialVals = {};
     const initialSeedRand = {};
-    activeEntry.manifest.controls.forEach((ctrl) => {
+    (activeEntry.manifest.controls || []).forEach((ctrl) => {
       initialVals[ctrl.id] = ctrl.default;
       if (ctrl.component === 'seed') {
         initialSeedRand[ctrl.id] = ctrl.randomize_by_default !== false;
@@ -99,7 +193,36 @@ export default function App() {
     });
     setFormValues(initialVals);
     setSeedRandomizeMap(initialSeedRand);
+    setActiveSection('primary');
   }, [activeEntry]);
+
+  // Dynamically fetch available models from ComfyUI `/object_info/{class}`
+  useEffect(() => {
+    if (!activeEntry || (connectionStatus !== 'online' && connectionStatus !== 'http_only')) return;
+
+    const modelControls = (activeEntry.manifest.controls || []).filter(
+      (c) => c.object_info_class && c.object_info_param
+    );
+
+    modelControls.forEach(async (ctrl) => {
+      const cacheKey = `${ctrl.object_info_class}.${ctrl.object_info_param}`;
+      try {
+        const res = await fetch(`${cleanEndpoint}/object_info/${ctrl.object_info_class}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const list =
+          data?.[ctrl.object_info_class]?.input?.required?.[ctrl.object_info_param]?.[0] ||
+          data?.[ctrl.object_info_class]?.input?.optional?.[ctrl.object_info_param]?.[0];
+        if (Array.isArray(list) && list.length > 0) {
+          setAvailableModels((prev) => ({
+            ...prev,
+            [ctrl.object_info_class]: list,
+            [cacheKey]: list
+          }));
+        }
+      } catch (_) {}
+    });
+  }, [activeEntry, connectionStatus, cleanEndpoint]);
 
   // Load persisted blobs from IndexedDB (`comfy_outputs`) immediately on startup
   useEffect(() => {
@@ -110,7 +233,6 @@ export default function App() {
         if (!mounted || cachedItems.length === 0) return;
         setComfyOutputsGallery(cachedItems);
         setActiveMediaOutput((prev) => prev || cachedItems[0]);
-        addLog('info', `Restored ${cachedItems.length} media file(s) from local IndexedDB`);
       })
       .catch((err) => addLog('error', `IndexedDB load error: ${err.message}`));
 
@@ -119,29 +241,17 @@ export default function App() {
     };
   }, [addLog]);
 
-  // Live Compiled API JSON (Leaves backend filename_prefix 100% untouched)
+  // Universal Live Compiled API JSON
   const compiledWorkflowJson = useMemo(() => {
     if (!activeEntry) return {};
-    const clone = JSON.parse(JSON.stringify(activeEntry.workflowApi));
-
-    activeEntry.manifest.controls.forEach((ctrl) => {
-      const val = formValues[ctrl.id] !== undefined ? formValues[ctrl.id] : ctrl.default;
-      const node = clone[ctrl.target_node];
-      if (!node || !node.inputs) return;
-
-      if (ctrl.component === 'aspect_picker' && val) {
-        const wKey = (ctrl.width_field || 'inputs.width').replace('inputs.', '');
-        const hKey = (ctrl.height_field || 'inputs.height').replace('inputs.', '');
-        node.inputs[wKey] = Number(val.width);
-        node.inputs[hKey] = Number(val.height);
-      } else if (ctrl.target_field) {
-        const fieldKey = ctrl.target_field.replace('inputs.', '');
-        node.inputs[fieldKey] = val;
-      }
-    });
-
-    return clone;
+    return compileWorkflowFromManifest(activeEntry.workflowApi, activeEntry.manifest, formValues);
   }, [activeEntry, formValues]);
+
+  // Current workflow run metadata (steps, batchCount, resolution) extracted generically
+  const currentRunMeta = useMemo(
+    () => extractWorkflowRunMeta(activeEntry?.manifest, formValues),
+    [activeEntry, formValues]
+  );
 
   // Download media outputs from a ComfyUI `/history` job as binary Blobs and store in IndexedDB
   const downloadAndCacheJobOutputs = useCallback(
@@ -163,7 +273,6 @@ export default function App() {
 
           const itemId = `${promptId}-${nodeId}-${idx}-${item.filename}`;
 
-          // 1. Check if already cached in IndexedDB
           const existing = await comfyOutputDB.getById(itemId);
           if (existing && existing.blob) {
             savedItems.push({
@@ -173,7 +282,6 @@ export default function App() {
             continue;
           }
 
-          // 2. Fetch raw binary Blob from ComfyUI `/view` endpoint
           const params = new URLSearchParams({
             filename: item.filename,
             subfolder: item.subfolder || '',
@@ -238,7 +346,7 @@ export default function App() {
           setShowRightDrawer(true);
           addLog(
             'success',
-            `Saved ${storedMedia.length} binary Blob(s) into local comfy_outputs IndexedDB`
+            `Saved ${storedMedia.length} output Blob(s) into local comfy_outputs IndexedDB`
           );
           return true;
         }
@@ -283,6 +391,34 @@ export default function App() {
     }
   }, [connectionStatus, cleanEndpoint, galleryLimit, downloadAndCacheJobOutputs, activeMediaOutput, addLog]);
 
+  // Download all visible/cached generations in one go
+  const handleDownloadAllGallery = useCallback(async () => {
+    if (comfyOutputsGallery.length === 0 || isDownloadingAll) return;
+    setIsDownloadingAll(true);
+    addLog('info', `Starting batch download of ${comfyOutputsGallery.length} file(s)...`);
+
+    try {
+      for (let i = 0; i < comfyOutputsGallery.length; i++) {
+        const item = comfyOutputsGallery[i];
+        if (!item?.url) continue;
+
+        const a = document.createElement('a');
+        a.href = item.url;
+        a.download = item.filename || `comfy_output_${i + 1}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        await new Promise((resolve) => setTimeout(resolve, 220));
+      }
+      addLog('success', `Downloaded all ${comfyOutputsGallery.length} file(s)`);
+    } catch (err) {
+      addLog('error', `Download All failed: ${err.message}`);
+    } finally {
+      setIsDownloadingAll(false);
+    }
+  }, [comfyOutputsGallery, isDownloadingAll, addLog]);
+
   // Step 0: Ping Endpoint + Connect WebSocket
   const checkEndpointAndConnect = useCallback(
     async (rawUrl) => {
@@ -315,17 +451,6 @@ export default function App() {
         setLatencyMs(pingTime);
         addLog('success', `Connected to ${normalized} (${pingTime}ms)`);
 
-        try {
-          const objRes = await fetch(`${normalized}/object_info/UNETLoader`);
-          if (objRes.ok) {
-            const objData = await objRes.json();
-            const unetList = objData?.UNETLoader?.input?.required?.unet_name?.[0];
-            if (Array.isArray(unetList) && unetList.length > 0) {
-              setAvailableModels((prev) => ({ ...prev, UNETLoader: unetList }));
-            }
-          }
-        } catch (_) {}
-
         const wsProtocol = normalized.startsWith('https') ? 'wss' : 'ws';
         const hostPart = normalized.replace(/^https?:\/\//, '');
         const wsUrl = `${wsProtocol}://${hostPart}/ws?clientId=${clientIdRef.current}`;
@@ -351,6 +476,7 @@ export default function App() {
               }
             } else if (msg.type === 'execution_error' && msg.data) {
               setIsGenerating(false);
+              setExecutingNodeId(null);
               addLog('error', `Node Error: ${msg.data.exception_message}`);
             }
           } catch (_) {}
@@ -386,49 +512,41 @@ export default function App() {
     return () => clearInterval(timer);
   }, [isGenerating, activePromptId, connectionStatus, cleanEndpoint, fetchHistoryOutput]);
 
-  // Execute Workflow (Leaves SaveImage untouched, downloads result as Blob into IndexedDB)
+  // Universal Workflow Dispatcher
   const handleRunWorkflow = async () => {
+    if (!activeEntry) return;
+
     const nextValues = { ...formValues };
-    activeEntry.manifest.controls.forEach((ctrl) => {
+    (activeEntry.manifest.controls || []).forEach((ctrl) => {
       if (ctrl.component === 'seed' && seedRandomizeMap[ctrl.id]) {
         nextValues[ctrl.id] = Math.floor(Math.random() * 900000000000000) + 100000000000000;
       }
     });
     setFormValues(nextValues);
 
-    const payloadWorkflow = JSON.parse(JSON.stringify(activeEntry.workflowApi));
-    activeEntry.manifest.controls.forEach((ctrl) => {
-      const val = nextValues[ctrl.id] !== undefined ? nextValues[ctrl.id] : ctrl.default;
-      const node = payloadWorkflow[ctrl.target_node];
-      if (!node || !node.inputs) return;
-      if (ctrl.component === 'aspect_picker' && val) {
-        const wKey = (ctrl.width_field || 'inputs.width').replace('inputs.', '');
-        const hKey = (ctrl.height_field || 'inputs.height').replace('inputs.', '');
-        node.inputs[wKey] = Number(val.width);
-        node.inputs[hKey] = Number(val.height);
-      } else if (ctrl.target_field) {
-        const fieldKey = ctrl.target_field.replace('inputs.', '');
-        node.inputs[fieldKey] = val;
-      }
-    });
+    const payloadWorkflow = compileWorkflowFromManifest(
+      activeEntry.workflowApi,
+      activeEntry.manifest,
+      nextValues
+    );
 
-    const totalSteps = Number(nextValues.steps || 8);
-    const batchCount = Math.max(1, Number(nextValues.batch_size || 1));
-    const width = nextValues.aspect_ratio?.width || 1920;
-    const height = nextValues.aspect_ratio?.height || 1088;
-
+    const runMeta = extractWorkflowRunMeta(activeEntry.manifest, nextValues);
     lastRunMetaRef.current = {
-      seed: nextValues.seed,
-      resolution: `${width}×${height}`
+      seed: runMeta.seed,
+      resolution: runMeta.resolution
     };
 
+    const workflowNodeIds = Object.keys(payloadWorkflow);
     setIsGenerating(true);
-    setProgressStep({ value: 0, max: totalSteps });
-    setExecutingNodeId('30:44');
+    setProgressStep({ value: 0, max: runMeta.steps });
+    setExecutingNodeId(connectionStatus === 'online' ? null : workflowNodeIds[0] || null);
 
     if (connectionStatus === 'online' || connectionStatus === 'http_only') {
       try {
-        addLog('info', `POST /prompt (Batch size: ${batchCount})`);
+        addLog(
+          'info',
+          `POST /prompt (${activeEntry.manifest.meta?.short_title || activeEntry.manifest.meta?.title}, Batch ×${runMeta.batchCount})`
+        );
         const res = await fetch(`${cleanEndpoint}/prompt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -438,55 +556,71 @@ export default function App() {
           })
         });
         const data = await res.json();
+
         if (!res.ok || data.error) {
-          throw new Error(data?.error?.message || 'Prompt execution rejected');
+          const nodeErrDetails = data.node_errors
+            ? Object.entries(data.node_errors)
+                .map(([nId, errObj]) => `Node ${nId}: ${errObj.errors?.[0]?.message || 'Invalid input'}`)
+                .join(' | ')
+            : '';
+          throw new Error(
+            nodeErrDetails || data?.error?.message || 'Prompt execution rejected by ComfyUI'
+          );
         }
+
         setActivePromptId(data.prompt_id);
+        addLog('success', `Queued prompt_id: ${data.prompt_id}`);
       } catch (err) {
         setIsGenerating(false);
         setExecutingNodeId(null);
+        setStatusMessage(`ERROR: ${err.message}`);
         addLog('error', `POST /prompt failed: ${err.message}`);
       }
     } else {
-      // Sandbox Batch Simulation -> Saves real SVG Blobs into IndexedDB `comfy_outputs`
-      addLog('info', `Simulating batch of ${batchCount} Blob(s) into IndexedDB...`);
+      // Universal Sandbox Simulation
+      addLog('info', `Simulating batch of ${runMeta.batchCount} Blob(s) into IndexedDB...`);
       let step = 0;
       const interval = setInterval(async () => {
         step += 1;
-        setProgressStep({ value: step, max: totalSteps });
-        if (step >= totalSteps) {
+        const simNodeIdx = Math.min(
+          workflowNodeIds.length - 1,
+          Math.floor((step / runMeta.steps) * workflowNodeIds.length)
+        );
+        setExecutingNodeId(workflowNodeIds[simNodeIdx]);
+        setProgressStep({ value: step, max: runMeta.steps });
+
+        if (step >= runMeta.steps) {
           clearInterval(interval);
           setIsGenerating(false);
           setExecutingNodeId(null);
 
-          const basePrefix = String(nextValues.filename_prefix || 'comfyui-editorial');
+          const basePrefix = String(nextValues.filename_prefix || activeEntry.id || 'comfy-output');
           const storedBatch = [];
 
-          for (let idx = 0; idx < batchCount; idx++) {
-            const itemSeed = Number(nextValues.seed || 1000) + idx;
+          for (let idx = 0; idx < runMeta.batchCount; idx++) {
+            const itemSeed = Number(runMeta.seed || 1000) + idx;
             const filename = `${basePrefix}_${String(Date.now()).slice(-4)}_0${idx + 1}.svg`;
             const svgBlob = createSimulatedBatchSvgBlob({
-              promptText: nextValues.prompt_text,
+              promptText: runMeta.promptPreview,
               seed: itemSeed,
               batchIndex: idx,
-              batchTotal: batchCount,
-              width,
-              height
+              batchTotal: runMeta.batchCount,
+              resolution: runMeta.resolution
             });
 
             const savedItem = await comfyOutputDB.saveMediaBlob({
               id: `sim-${Date.now()}-${idx}`,
               promptId: 'sandbox-batch',
-              nodeId: '76',
+              nodeId: activeEntry.manifest.outputs?.[0]?.target_node || 'output',
               filename,
               folderPath: `comfy_outputs/${filename}`,
               kind: 'image',
               isSimulated: true,
               blob: svgBlob,
               seed: itemSeed,
-              resolution: `${width}×${height}`,
+              resolution: runMeta.resolution,
               batchIndex: idx + 1,
-              batchTotal: batchCount,
+              batchTotal: runMeta.batchCount,
               timestamp: new Date().toLocaleTimeString(),
               createdAt: Date.now() + idx
             });
@@ -497,7 +631,7 @@ export default function App() {
           setActiveMediaOutput(storedBatch[0]);
           setComfyOutputsGallery((prev) => [...storedBatch, ...prev]);
           setShowRightDrawer(true);
-          addLog('success', `Saved ${batchCount} simulated Blob(s) into IndexedDB comfy_outputs`);
+          addLog('success', `Saved ${runMeta.batchCount} simulated Blob(s) into IndexedDB`);
         }
       }, 180);
     }
@@ -505,6 +639,7 @@ export default function App() {
 
   // Download Paired Manifest
   const handleDownloadManifest = () => {
+    if (!activeEntry) return;
     const bundle = {
       ...activeEntry.manifest,
       _embedded_workflow_api: activeEntry.workflowApi
@@ -518,8 +653,37 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // Import Custom Workflow Manifest
-  const handleImportCustomWorkflow = () => {
+  // Mobile File Picker Handler: Automatically detects whether selected JSON file(s) are Manifest or Workflow API
+  const handleSelectJsonFiles = async (fileList) => {
+    if (!fileList || fileList.length === 0) return;
+    setImportError('');
+
+    for (const file of Array.from(fileList)) {
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+
+        // If the JSON contains a `controls` array (or filename ends in .manifest.json), treat as Manifest
+        if (Array.isArray(parsed.controls) || file.name.endsWith('.manifest.json')) {
+          setImportManifestText(text);
+          setManifestFileName(file.name);
+          // If it also embeds `_embedded_workflow_api`, auto-populate workflow if empty
+          if (parsed._embedded_workflow_api && !importWorkflowText) {
+            setImportWorkflowText(JSON.stringify(parsed._embedded_workflow_api, null, 2));
+            setWorkflowFileName('Embedded inside manifest');
+          }
+        } else {
+          setImportWorkflowText(text);
+          setWorkflowFileName(file.name);
+        }
+      } catch (err) {
+        setImportError(`Failed to parse "${file.name}": ${err.message}`);
+      }
+    }
+  };
+
+  // Import Custom Workflow Manifest & Persist to IndexedDB (`comfyWorkflowDB`)
+  const handleImportCustomWorkflow = async () => {
     setImportError('');
     try {
       const parsedManifest = JSON.parse(importManifestText);
@@ -530,27 +694,63 @@ export default function App() {
       if (importWorkflowText.trim()) {
         parsedWorkflow = JSON.parse(importWorkflowText);
       }
-      if (!parsedWorkflow) parsedWorkflow = STARTER_WORKFLOW_API_JSON;
+      if (!parsedWorkflow) {
+        throw new Error('Please upload or paste the paired workflow_api.json file.');
+      }
 
       const newId = (parsedManifest.meta?.id || 'custom') + '-' + Date.now();
-      const title = parsedManifest.meta?.title || 'Custom Mobile Workflow';
+      const fallbackTitle = manifestFileName
+        ? manifestFileName.replace(/\.manifest\.json$|\.json$/i, '')
+        : 'Custom Mobile Workflow';
+      const title = parsedManifest.meta?.title || fallbackTitle;
+
       const newEntry = {
         id: newId,
-        filename: parsedManifest.workflow_file || `${title}.json`,
-        manifestFilename: `${title}.manifest.json`,
-        manifest: { ...parsedManifest, meta: { ...parsedManifest.meta, id: newId, title } },
-        workflowApi: parsedWorkflow
+        filename: workflowFileName || parsedManifest.workflow_file || `${title}.json`,
+        manifestFilename: manifestFileName || `${title}.manifest.json`,
+        manifest: {
+          ...parsedManifest,
+          meta: { ...parsedManifest.meta, id: newId, title }
+        },
+        workflowApi: parsedWorkflow,
+        isBuiltIn: false,
+        createdAt: Date.now()
       };
+
+      await comfyWorkflowDB.saveCustomWorkflow(newEntry);
 
       setWorkflowLibrary((prev) => [...prev, newEntry]);
       setActiveWorkflowId(newId);
       setShowImportModal(false);
       setImportManifestText('');
       setImportWorkflowText('');
+      setManifestFileName('');
+      setWorkflowFileName('');
+      addLog('success', `Saved custom workflow "${title}" to device IndexedDB`);
     } catch (err) {
       setImportError(err.message);
     }
   };
+
+  // Delete a custom user-imported workflow from IndexedDB
+  const handleDeleteCustomWorkflow = useCallback(
+    async (idToRemove) => {
+      try {
+        await comfyWorkflowDB.deleteCustomWorkflow(idToRemove);
+        setWorkflowLibrary((prev) => {
+          const next = prev.filter((item) => item.id !== idToRemove);
+          if (activeWorkflowId === idToRemove && next.length > 0) {
+            setActiveWorkflowId(next[0].id);
+          }
+          return next;
+        });
+        addLog('info', `Removed custom workflow from device IndexedDB`);
+      } catch (err) {
+        addLog('error', `Failed to delete workflow: ${err.message}`);
+      }
+    },
+    [activeWorkflowId, addLog]
+  );
 
   const groupedControls = useMemo(() => {
     const controls = activeEntry?.manifest?.controls || [];
@@ -560,6 +760,9 @@ export default function App() {
       advanced: controls.filter((c) => c.group === 'advanced')
     };
   }, [activeEntry]);
+
+  const activeBeforeControlId =
+    activeEntry?.manifest?.extensions?.image_comparer?.before_control_id || 'source_image';
 
   return (
     <div className="h-dvh w-full overflow-hidden flex flex-col bg-zinc-950 text-zinc-100 font-sans select-none relative">
@@ -575,7 +778,7 @@ export default function App() {
         onPing={() => checkEndpointAndConnect(endpointInput)}
         isExpanded={isHeaderExpanded}
         setIsExpanded={setIsHeaderExpanded}
-        activeManifestFilename={activeEntry.manifestFilename}
+        activeManifestFilename={activeEntry?.manifestFilename || 'None'}
         showCorsHelp={showCorsHelp}
         setShowCorsHelp={setShowCorsHelp}
         onOpenInspector={() => setShowCodeInspector(true)}
@@ -588,6 +791,7 @@ export default function App() {
         workflowLibrary={workflowLibrary}
         activeWorkflowId={activeWorkflowId}
         onSelectWorkflow={setActiveWorkflowId}
+        onDeleteCustomWorkflow={handleDeleteCustomWorkflow}
         onOpenImportModal={() => setShowImportModal(true)}
         onDownloadManifest={handleDownloadManifest}
       />
@@ -599,6 +803,7 @@ export default function App() {
         onClose={() => setShowRightDrawer(false)}
         isGenerating={isGenerating}
         executingNodeId={executingNodeId}
+        executingNodeName={executingNodeName}
         progressStep={progressStep}
         connectionStatus={connectionStatus}
         activeMediaOutput={activeMediaOutput}
@@ -607,21 +812,24 @@ export default function App() {
         galleryLimit={galleryLimit}
         setGalleryLimit={setGalleryLimit}
         onSyncComfyOutputsFolder={handleSyncComfyOutputsFolder}
+        onDownloadAllGallery={handleDownloadAllGallery}
+        isDownloadingAll={isDownloadingAll}
         onClearGallery={async () => {
           await comfyOutputDB.clearAll();
           setComfyOutputsGallery([]);
           setActiveMediaOutput(null);
           addLog('info', 'Cleared all cached media Blobs from IndexedDB');
         }}
+        comparerExtension={activeEntry?.manifest?.extensions?.image_comparer}
+        beforeImageUrl={uploadedPreviews[`${activeEntry?.id}:${activeBeforeControlId}`]}
       />
 
       {/* 4. MAIN FULL-BLEED MOBILE CONTENT */}
       <main className="flex-1 overflow-y-auto flex flex-col">
-        {/* Compact Workflow Title Strip */}
         <div className="px-3.5 pt-3 pb-2.5 border-b border-zinc-900 bg-zinc-950">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-              {activeEntry.manifest.meta?.badge || 'MOBILE WORKFLOW'}
+              {activeEntry?.manifest?.meta?.badge || 'MOBILE WORKFLOW'}
             </span>
             <button
               type="button"
@@ -633,7 +841,7 @@ export default function App() {
             </button>
           </div>
           <h1 className="text-sm font-bold text-zinc-100 mt-1 leading-snug">
-            {activeEntry.manifest.meta?.title}
+            {activeEntry?.manifest?.meta?.title || 'No Paired Workflows Found'}
           </h1>
         </div>
 
@@ -681,6 +889,9 @@ export default function App() {
                 }))
               }
               availableModels={availableModels}
+              uploadedPreviewUrl={uploadedPreviews[`${activeEntry?.id}:${ctrl.id}`]}
+              onUploadImage={handleUploadInputMedia}
+              isUploadingImage={isUploadingImage}
             />
           ))}
         </div>
@@ -690,10 +901,10 @@ export default function App() {
       <footer className="p-3 bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800 shrink-0">
         <button
           type="button"
-          disabled={isGenerating}
+          disabled={isGenerating || isUploadingImage || !activeEntry}
           onClick={handleRunWorkflow}
           className={`w-full py-3.5 px-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all ${
-            isGenerating
+            isGenerating || isUploadingImage
               ? 'bg-zinc-800 text-zinc-300'
               : connectionStatus === 'online' || connectionStatus === 'http_only'
               ? 'bg-emerald-500 active:bg-emerald-400 text-zinc-950'
@@ -701,11 +912,13 @@ export default function App() {
           }`}
         >
           <Play className="w-4 h-4 fill-current" />
-          {isGenerating
-            ? `Generating (${progressStep.value}/${progressStep.max})...`
+          {isUploadingImage
+            ? 'Uploading Input Image to ComfyUI...'
+            : isGenerating
+            ? `${executingNodeName} (${progressStep.value}/${progressStep.max})...`
             : connectionStatus === 'online' || connectionStatus === 'http_only'
-            ? `Generate (Batch ×${formValues.batch_size || 1})`
-            : `Run Sandbox (Batch ×${formValues.batch_size || 1} → comfy_outputs)`}
+            ? `Generate (Batch ×${currentRunMeta?.batchCount || formValues.batch_size || 1})`
+            : `Run Sandbox (Batch ×${currentRunMeta?.batchCount || formValues.batch_size || 1} → comfy_outputs)`}
         </button>
       </footer>
 
@@ -747,7 +960,11 @@ export default function App() {
               {devLogs.map((log, i) => (
                 <div
                   key={i}
-                  className="p-2 rounded-lg border bg-zinc-900 border-zinc-800 text-zinc-300"
+                  className={`p-2 rounded-lg border ${
+                    log.type === 'error'
+                      ? 'bg-rose-950/40 border-rose-800 text-rose-300'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-300'
+                  }`}
                 >
                   <span className="text-zinc-500 mr-2">[{log.time}]</span>
                   <span>{log.msg}</span>
@@ -762,7 +979,7 @@ export default function App() {
                   const text =
                     inspectorTab === 'compiled'
                       ? JSON.stringify(compiledWorkflowJson, null, 2)
-                      : JSON.stringify(activeEntry.manifest, null, 2);
+                      : JSON.stringify(activeEntry?.manifest || {}, null, 2);
                   navigator.clipboard.writeText(text);
                   setCopiedFlag(true);
                   setTimeout(() => setCopiedFlag(false), 1500);
@@ -775,62 +992,151 @@ export default function App() {
               <pre className="whitespace-pre-wrap wrap-break-word">
                 {inspectorTab === 'compiled'
                   ? JSON.stringify(compiledWorkflowJson, null, 2)
-                  : JSON.stringify(activeEntry.manifest, null, 2)}
+                  : JSON.stringify(activeEntry?.manifest || {}, null, 2)}
               </pre>
             </div>
           )}
         </div>
       )}
 
-      {/* 7. MOBILE IMPORT CUSTOM MANIFEST MODAL */}
+      {/* 7. MOBILE IMPORT CUSTOM MANIFEST MODAL (With Device File Pickers & IndexedDB Persistence) */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-end justify-center">
-          <div className="bg-zinc-900 border-t border-zinc-800 rounded-t-3xl w-full p-4 space-y-3 max-h-[90dvh] flex flex-col">
+          <div className="bg-zinc-900 border-t border-zinc-800 rounded-t-3xl w-full p-4 space-y-3 max-h-[92dvh] flex flex-col">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
-              <h3 className="text-sm font-bold text-white">Import Paired Manifest</h3>
+              <div>
+                <h3 className="text-sm font-bold text-white">Import Paired Workflow</h3>
+                <p className="text-[10px] font-mono text-zinc-400">
+                  Saves permanently to device IndexedDB (<code>custom_workflows</code>)
+                </p>
+              </div>
               <button type="button" onClick={() => setShowImportModal(false)}>
                 <X className="w-5 h-5 text-zinc-400" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-zinc-300">1. Paired manifest.json</label>
-                <button
-                  type="button"
-                  onClick={() => setImportManifestText(JSON.stringify(STARTER_MANIFEST_JSON, null, 2))}
-                  className="text-[11px] font-mono text-emerald-400"
-                >
-                  Load Template
-                </button>
-              </div>
-              <textarea
-                rows={5}
-                value={importManifestText}
-                onChange={(e) => setImportManifestText(e.target.value)}
-                placeholder='{"manifest_version": "1.0", "controls": [...]}'
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-xs font-mono text-zinc-200 select-text"
+            {/* 1-Tap Multi-File Picker for Mobile Downloads Folder */}
+            <label className="w-full py-2.5 px-3 rounded-2xl bg-emerald-500/15 border border-dashed border-emerald-500/60 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer active:bg-emerald-500/25">
+              <Upload className="w-4 h-4 shrink-0" />
+              <span>Pick .manifest.json & .json Files from Device</span>
+              <input
+                type="file"
+                accept=".json,application/json"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  handleSelectJsonFiles(e.target.files);
+                  e.target.value = '';
+                }}
               />
+            </label>
 
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-zinc-300">2. workflow_api.json</label>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setImportWorkflowText(JSON.stringify(STARTER_WORKFLOW_API_JSON, null, 2))
-                  }
-                  className="text-[11px] font-mono text-emerald-400"
-                >
-                  Load Starter API JSON
-                </button>
+            <div className="flex-1 overflow-y-auto space-y-3">
+              {/* Manifest JSON Section */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                    <FileJson className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>1. Paired manifest.json</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="px-2 py-1 rounded-lg bg-zinc-800 border border-zinc-700 text-[10px] font-mono text-emerald-400 cursor-pointer">
+                      Upload File
+                      <input
+                        type="file"
+                        accept=".json,application/json"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const text = await file.text();
+                            setImportManifestText(text);
+                            setManifestFileName(file.name);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    {activeEntry && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportManifestText(JSON.stringify(activeEntry.manifest, null, 2));
+                          setManifestFileName('template.manifest.json');
+                        }}
+                        className="text-[10px] font-mono text-zinc-400 underline"
+                      >
+                        Template
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {manifestFileName && (
+                  <div className="text-[10px] font-mono text-emerald-400 truncate">
+                    Loaded: {manifestFileName}
+                  </div>
+                )}
+                <textarea
+                  rows={4}
+                  value={importManifestText}
+                  onChange={(e) => setImportManifestText(e.target.value)}
+                  placeholder='{"manifest_version": "1.0", "controls": [...]}'
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-xs font-mono text-zinc-200 select-text"
+                />
               </div>
-              <textarea
-                rows={4}
-                value={importWorkflowText}
-                onChange={(e) => setImportWorkflowText(e.target.value)}
-                placeholder="Paste ComfyUI API JSON..."
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-xs font-mono text-zinc-200 select-text"
-              />
+
+              {/* Workflow API JSON Section */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                    <FileJson className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>2. ComfyUI workflow_api.json</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="px-2 py-1 rounded-lg bg-zinc-800 border border-zinc-700 text-[10px] font-mono text-emerald-400 cursor-pointer">
+                      Upload File
+                      <input
+                        type="file"
+                        accept=".json,application/json"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const text = await file.text();
+                            setImportWorkflowText(text);
+                            setWorkflowFileName(file.name);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    {activeEntry && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportWorkflowText(JSON.stringify(activeEntry.workflowApi, null, 2));
+                          setWorkflowFileName('template_workflow.json');
+                        }}
+                        className="text-[10px] font-mono text-zinc-400 underline"
+                      >
+                        Template
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {workflowFileName && (
+                  <div className="text-[10px] font-mono text-emerald-400 truncate">
+                    Loaded: {workflowFileName}
+                  </div>
+                )}
+                <textarea
+                  rows={4}
+                  value={importWorkflowText}
+                  onChange={(e) => setImportWorkflowText(e.target.value)}
+                  placeholder="Paste or upload exported ComfyUI API JSON..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-xs font-mono text-zinc-200 select-text"
+                />
+              </div>
 
               {importError && (
                 <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 text-xs font-mono">
@@ -842,9 +1148,9 @@ export default function App() {
             <button
               type="button"
               onClick={handleImportCustomWorkflow}
-              className="w-full py-3 rounded-xl bg-emerald-500 text-zinc-950 text-xs font-bold"
+              className="w-full py-3 rounded-xl bg-emerald-500 active:bg-emerald-400 text-zinc-950 text-xs font-bold"
             >
-              Add to Workflows Directory
+              Save to Device Workflows Directory
             </button>
           </div>
         </div>

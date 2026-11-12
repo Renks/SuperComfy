@@ -2,7 +2,8 @@ import React from 'react';
 import {
   Sparkles,
   Lock,
-  Dices
+  Dices,
+  Upload
 } from 'lucide-react';
 
 function ManifestControlField({
@@ -12,7 +13,10 @@ function ManifestControlField({
   isSeedRandom,
   onToggleSeedRandom,
   onRollRandomSeed,
-  availableModels
+  availableModels,
+  uploadedPreviewUrl,
+  onUploadImage,
+  isUploadingImage
 }) {
   switch (ctrl.component) {
     case 'textarea':
@@ -110,6 +114,29 @@ function ManifestControlField({
         </div>
       );
 
+    case 'number':
+      return (
+        <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-3.5 flex items-center justify-between gap-3">
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-200 block">
+              {ctrl.label}
+            </label>
+            <span className="text-[10px] font-mono text-zinc-500">
+              Node {ctrl.target_node} → {ctrl.target_field}
+            </span>
+          </div>
+          <input
+            type="number"
+            min={ctrl.min}
+            max={ctrl.max}
+            step={ctrl.step || 1}
+            value={val}
+            onChange={(e) => onChange(Number(e.target.value))}
+            className="w-24 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-right text-xs font-mono text-emerald-400 focus:outline-none focus:border-emerald-500"
+          />
+        </div>
+      );
+
     case 'seed':
       return (
         <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-3.5">
@@ -155,12 +182,95 @@ function ManifestControlField({
         </div>
       );
 
+    case 'image_upload':
+    case 'video_upload':
+    case 'audio_upload':
+    case 'media_upload': {
+      const acceptMap = {
+        image_upload: 'image/*',
+        video_upload: 'video/*,image/*',
+        audio_upload: 'audio/*',
+        media_upload: 'image/*,video/*,audio/*'
+      };
+      return (
+        <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-200 flex items-center gap-1.5">
+              <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              {ctrl.label}
+            </label>
+            <span className="text-[10px] font-mono text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
+              Node {ctrl.target_node}
+            </span>
+          </div>
+
+          {uploadedPreviewUrl && ctrl.component === 'image_upload' && (
+            <div className="relative rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 max-h-44 flex items-center justify-center">
+              <img
+                src={uploadedPreviewUrl}
+                alt="Uploaded input"
+                className="max-h-44 w-auto object-contain"
+              />
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <label className="flex-1 cursor-pointer py-2.5 px-3 rounded-xl bg-emerald-500/15 border border-emerald-500/50 text-emerald-300 text-xs font-semibold text-center active:bg-emerald-500/25 transition-colors">
+              {isUploadingImage ? 'Uploading to ComfyUI...' : 'Choose File from Device'}
+              <input
+                type="file"
+                accept={ctrl.accept || acceptMap[ctrl.component] || 'image/*'}
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file && onUploadImage) onUploadImage(ctrl.id, file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="text-[10px] font-mono text-zinc-400 truncate">
+            Input file: <span className="text-zinc-200">{val}</span>
+          </div>
+        </div>
+      );
+    }
+
+    case 'toggle':
+      return (
+        <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-3.5 flex items-center justify-between">
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-200 block">
+              {ctrl.label}
+            </label>
+            <span className="text-[10px] font-mono text-zinc-500">
+              Node {ctrl.target_node} → {ctrl.target_field}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange(!val)}
+            className={`w-12 h-6 rounded-full p-0.5 transition-colors ${
+              val ? 'bg-emerald-500' : 'bg-zinc-800 border border-zinc-700'
+            }`}
+          >
+            <div
+              className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                val ? 'translate-x-6' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+      );
+
     case 'model_dropdown':
     case 'dropdown': {
+      const cacheKey = `${ctrl.object_info_class}.${ctrl.object_info_param}`;
       const dynamicList =
-        ctrl.object_info_class && availableModels[ctrl.object_info_class]
-          ? availableModels[ctrl.object_info_class]
-          : ctrl.options || [ctrl.default];
+        (ctrl.object_info_class && (availableModels[cacheKey] || availableModels[ctrl.object_info_class])) ||
+        ctrl.options ||
+        [ctrl.default];
 
       return (
         <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-3.5">

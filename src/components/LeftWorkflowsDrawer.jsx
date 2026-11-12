@@ -4,7 +4,8 @@ import {
   Download,
   Layers,
   X,
-  FileJson
+  FileJson,
+  Trash2
 } from 'lucide-react';
 
 function LeftWorkflowsDrawer({
@@ -13,6 +14,7 @@ function LeftWorkflowsDrawer({
   workflowLibrary,
   activeWorkflowId,
   onSelectWorkflow,
+  onDeleteCustomWorkflow,
   onOpenImportModal,
   onDownloadManifest
 }) {
@@ -37,7 +39,7 @@ function LeftWorkflowsDrawer({
               Workflows Directory
             </h2>
             <p className="text-[10px] text-zinc-400 mt-0.5">
-              Showing paired <code>.manifest.json</code> files
+              Built-in + Device IndexedDB Workflows
             </p>
           </div>
           <button
@@ -53,27 +55,50 @@ function LeftWorkflowsDrawer({
           {workflowLibrary.map((item) => {
             const isSelected = item.id === activeWorkflowId;
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
                 onClick={() => {
                   onSelectWorkflow(item.id);
                   onClose();
                 }}
-                className={`w-full text-left p-3 rounded-2xl border transition-all ${
+                className={`w-full text-left p-3 rounded-2xl border transition-all cursor-pointer ${
                   isSelected
                     ? 'bg-emerald-500/15 border-emerald-500/70'
                     : 'bg-zinc-950/70 border-zinc-800/80'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    {item.manifest.meta?.badge || 'PAIRED'}
-                  </span>
-                  <span className="text-[10px] font-mono text-zinc-500">
-                    {item.manifest.controls?.length || 0} controls
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                      {item.manifest.meta?.badge || 'PAIRED'}
+                    </span>
+                    {!item.isBuiltIn && (
+                      <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        CUSTOM
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-mono text-zinc-500">
+                      {item.manifest.controls?.length || 0} fields
+                    </span>
+                    {!item.isBuiltIn && onDeleteCustomWorkflow && (
+                      <button
+                        type="button"
+                        title="Delete custom workflow from device"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteCustomWorkflow(item.id);
+                        }}
+                        className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 active:text-rose-400"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
+
                 <div className="font-semibold text-xs text-zinc-100 leading-snug mt-1">
                   {item.manifest.meta?.title}
                 </div>
@@ -81,7 +106,7 @@ function LeftWorkflowsDrawer({
                   <FileJson className="w-3 h-3 text-emerald-400 shrink-0" />
                   <span className="truncate">{item.manifestFilename}</span>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>

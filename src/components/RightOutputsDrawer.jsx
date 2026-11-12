@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Download,
   ChevronLeft,
@@ -10,7 +10,8 @@ import {
   X,
   FolderSync,
   Trash2,
-  Database
+  Database,
+  Columns2
 } from 'lucide-react';
 
 function RightOutputsDrawer({
@@ -19,6 +20,7 @@ function RightOutputsDrawer({
   onClose,
   isGenerating,
   executingNodeId,
+  executingNodeName,
   progressStep,
   connectionStatus,
   activeMediaOutput,
@@ -27,12 +29,20 @@ function RightOutputsDrawer({
   galleryLimit,
   setGalleryLimit,
   onSyncComfyOutputsFolder,
-  onClearGallery
+  onDownloadAllGallery,
+  isDownloadingAll,
+  onClearGallery,
+  comparerExtension,
+  beforeImageUrl
 }) {
-  // Optimized capped loop over IndexedDB `comfy_outputs` items
   const visibleGalleryItems = useMemo(
     () => comfyOutputsGallery.slice(0, galleryLimit),
     [comfyOutputsGallery, galleryLimit]
+  );
+  const [compareSplit, setCompareSplit] = useState(50);
+  const [isCompareActive, setIsCompareActive] = useState(true);
+  const canCompare = Boolean(
+    comparerExtension?.enabled && beforeImageUrl && activeMediaOutput?.kind === 'image'
   );
 
   return (
@@ -103,7 +113,9 @@ function RightOutputsDrawer({
             </h2>
             <p className="text-[10px] font-mono text-zinc-400 mt-0.5 flex items-center gap-1">
               <Database className="w-3 h-3 text-emerald-400" />
-              <span>IndexedDB: <code className="text-emerald-400">comfy_outputs</code> ({comfyOutputsGallery.length})</span>
+              <span>
+                IndexedDB: <code className="text-emerald-400">comfy_outputs</code> ({comfyOutputsGallery.length})
+              </span>
             </p>
           </div>
           <button
@@ -126,11 +138,14 @@ function RightOutputsDrawer({
                 </div>
                 <div className="space-y-1">
                   <div className="text-xs font-semibold text-zinc-100">
-                    {connectionStatus === 'online' || connectionStatus === 'http_only'
-                      ? `Executing Node ${executingNodeId || '...'} on ComfyUI`
-                      : 'Rendering Batch Blobs into IndexedDB...'}
+                    {executingNodeName || 'Executing Workflow...'}
                   </div>
-                  <div className="text-[11px] font-mono text-emerald-400">
+                  {executingNodeId && (
+                    <div className="text-[10px] font-mono text-zinc-500">
+                      Node ID: {executingNodeId}
+                    </div>
+                  )}
+                  <div className="text-[11px] font-mono text-emerald-400 pt-0.5">
                     Step {progressStep.value} of {progressStep.max}
                   </div>
                 </div>
@@ -162,6 +177,42 @@ function RightOutputsDrawer({
                     <Music className="w-9 h-9 text-emerald-400" />
                     <audio src={activeMediaOutput.url} controls className="w-full" />
                   </div>
+                ) : canCompare && isCompareActive ? (
+                  <div className="relative w-full max-h-70 overflow-hidden bg-zinc-950 select-none">
+                    {/* AFTER IMAGE (Generated Output) */}
+                    <img
+                      src={activeMediaOutput.url}
+                      alt="After edit"
+                      className="w-full max-h-70 object-contain block"
+                    />
+                    {/* BEFORE IMAGE (Clipped by touch slider percentage) */}
+                    <img
+                      src={beforeImageUrl}
+                      alt="Before edit"
+                      style={{ clipPath: `inset(0 ${100 - compareSplit}% 0 0)` }}
+                      className="absolute inset-0 w-full h-full object-contain"
+                    />
+                    {/* Vertical Split Divider Line */}
+                    <div
+                      style={{ left: `${compareSplit}%` }}
+                      className="absolute inset-y-0 w-0.5 bg-emerald-400 shadow-[0_0_8px_#10b981] pointer-events-none"
+                    />
+                    {/* Touch Range Overlay */}
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={compareSplit}
+                      onChange={(e) => setCompareSplit(Number(e.target.value))}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize"
+                    />
+                    <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 text-[9px] font-mono text-zinc-200 pointer-events-none">
+                      BEFORE
+                    </div>
+                    <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-emerald-500/80 text-[9px] font-mono text-zinc-950 font-bold pointer-events-none">
+                      AFTER
+                    </div>
+                  </div>
                 ) : (
                   <img
                     src={activeMediaOutput.url}
@@ -170,14 +221,30 @@ function RightOutputsDrawer({
                   />
                 )}
 
-                <div className="p-2.5 bg-zinc-900/90 border-t border-zinc-800 space-y-1 text-[10px] font-mono">
-                  <div className="flex items-center justify-between text-zinc-200">
+                <div className="p-2.5 bg-zinc-900/90 border-t border-zinc-800 space-y-1.5 text-[10px] font-mono">
+                  <div className="flex items-center justify-between text-zinc-200 gap-2">
                     <span className="truncate font-semibold">{activeMediaOutput.filename}</span>
-                    {activeMediaOutput.batchTotal > 1 && (
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                        Batch {activeMediaOutput.batchIndex}/{activeMediaOutput.batchTotal}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {canCompare && (
+                        <button
+                          type="button"
+                          onClick={() => setIsCompareActive((v) => !v)}
+                          className={`px-2 py-0.5 rounded border flex items-center gap-1 ${
+                            isCompareActive
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              : 'bg-zinc-950 text-zinc-400 border-zinc-800'
+                          }`}
+                        >
+                          <Columns2 className="w-3 h-3" />
+                          <span>{isCompareActive ? 'Split On' : 'Split Off'}</span>
+                        </button>
+                      )}
+                      {activeMediaOutput.batchTotal > 1 && (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          Batch {activeMediaOutput.batchIndex}/{activeMediaOutput.batchTotal}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center justify-between text-zinc-400">
                     <span>
@@ -241,14 +308,31 @@ function RightOutputsDrawer({
                 </button>
 
                 {comfyOutputsGallery.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={onClearGallery}
-                    title="Clear IndexedDB gallery cache"
-                    className="p-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-500 active:text-rose-400"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      disabled={isDownloadingAll}
+                      onClick={onDownloadAllGallery}
+                      title="Download all generations in gallery"
+                      className={`px-2 py-1.5 rounded-lg border text-[10px] font-mono font-semibold flex items-center gap-1 transition-colors ${
+                        isDownloadingAll
+                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 animate-pulse'
+                          : 'bg-zinc-800 active:bg-zinc-700 border-zinc-700 text-emerald-400'
+                      }`}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{isDownloadingAll ? 'Saving...' : 'All'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={onClearGallery}
+                      title="Clear IndexedDB gallery cache"
+                      className="p-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-500 active:text-rose-400"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
                 )}
               </div>
             </div>
