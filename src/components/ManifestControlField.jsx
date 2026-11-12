@@ -1,37 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React from 'react';
 import {
   Sparkles,
-  Play,
-  FolderOpen,
-  Plus,
-  Download,
-  Code2,
-  RefreshCw,
   Lock,
-  Dices,
-  ChevronDown,
-  ChevronUp,
-  ChevronLeft,
-  ChevronRight,
-  Image as ImageIcon,
-  Film,
-  Music,
-  Terminal,
-  HelpCircle,
-  Check,
-  Copy,
-  Layers,
-  Zap,
-  X,
-  FileJson,
-  FolderSync,
-  Trash2,
-  ExternalLink
+  Dices
 } from 'lucide-react';
 
-// ============================================================================
-// 5. MODULAR COMPONENT: DYNAMIC MANIFEST FIELD RENDERER
-// ============================================================================
 function ManifestControlField({
   ctrl,
   val,

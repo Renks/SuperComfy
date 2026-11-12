@@ -1,37 +1,18 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useMemo } from 'react';
 import {
-  Sparkles,
-  Play,
-  FolderOpen,
-  Plus,
   Download,
-  Code2,
-  RefreshCw,
-  Lock,
-  Dices,
-  ChevronDown,
-  ChevronUp,
   ChevronLeft,
   ChevronRight,
   Images as ImageIcon,
   Film,
   Music,
-  Terminal,
-  HelpCircle,
-  Check,
-  Copy,
-  Layers,
   Zap,
   X,
-  FileJson,
   FolderSync,
   Trash2,
-  ExternalLink
+  Database
 } from 'lucide-react';
 
-// ============================================================================
-// 7. MODULAR COMPONENT: RIGHT SLIDING OUTPUT VIEWPORT & `comfy_outputs` GALLERY
-// ============================================================================
 function RightOutputsDrawer({
   isOpen,
   onToggle,
@@ -48,7 +29,7 @@ function RightOutputsDrawer({
   onSyncComfyOutputsFolder,
   onClearGallery
 }) {
-  // Optimized capped loop over `comfy_outputs` folder items
+  // Optimized capped loop over IndexedDB `comfy_outputs` items
   const visibleGalleryItems = useMemo(
     () => comfyOutputsGallery.slice(0, galleryLimit),
     [comfyOutputsGallery, galleryLimit]
@@ -120,8 +101,9 @@ function RightOutputsDrawer({
               <ImageIcon className="w-4 h-4 text-emerald-400" />
               Output Gallery
             </h2>
-            <p className="text-[10px] font-mono text-zinc-400 mt-0.5">
-              Folder: <code className="text-emerald-400">comfy_outputs/</code> ({comfyOutputsGallery.length} files)
+            <p className="text-[10px] font-mono text-zinc-400 mt-0.5 flex items-center gap-1">
+              <Database className="w-3 h-3 text-emerald-400" />
+              <span>IndexedDB: <code className="text-emerald-400">comfy_outputs</code> ({comfyOutputsGallery.length})</span>
             </p>
           </div>
           <button
@@ -133,7 +115,7 @@ function RightOutputsDrawer({
           </button>
         </div>
 
-        {/* Scrollable Content: Top Active Viewport + Bottom `comfy_outputs/` Gallery */}
+        {/* Scrollable Content: Top Active Viewport + Bottom `comfy_outputs` Gallery */}
         <div className="flex-1 overflow-y-auto p-3.5 space-y-4">
           {/* 1. ACTIVE OUTPUT VIEWPORT */}
           <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-800 min-h-52.5 flex flex-col justify-center">
@@ -146,7 +128,7 @@ function RightOutputsDrawer({
                   <div className="text-xs font-semibold text-zinc-100">
                     {connectionStatus === 'online' || connectionStatus === 'http_only'
                       ? `Executing Node ${executingNodeId || '...'} on ComfyUI`
-                      : 'Rendering Batch into comfy_outputs/...'}
+                      : 'Rendering Batch Blobs into IndexedDB...'}
                   </div>
                   <div className="text-[11px] font-mono text-emerald-400">
                     Step {progressStep.value} of {progressStep.max}
@@ -190,7 +172,7 @@ function RightOutputsDrawer({
 
                 <div className="p-2.5 bg-zinc-900/90 border-t border-zinc-800 space-y-1 text-[10px] font-mono">
                   <div className="flex items-center justify-between text-zinc-200">
-                    <span className="truncate font-semibold">{activeMediaOutput.folderPath}</span>
+                    <span className="truncate font-semibold">{activeMediaOutput.filename}</span>
                     {activeMediaOutput.batchTotal > 1 && (
                       <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
                         Batch {activeMediaOutput.batchIndex}/{activeMediaOutput.batchTotal}
@@ -204,12 +186,10 @@ function RightOutputsDrawer({
                     <a
                       href={activeMediaOutput.url}
                       download={activeMediaOutput.filename}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-emerald-400 flex items-center gap-1"
+                      className="text-emerald-400 flex items-center gap-1 font-semibold"
                     >
-                      <span>Open</span>
-                      <ExternalLink className="w-3 h-3" />
+                      <Download className="w-3 h-3" />
+                      <span>Save File</span>
                     </a>
                   </div>
                 </div>
@@ -221,18 +201,18 @@ function RightOutputsDrawer({
                 </div>
                 <div className="text-xs font-semibold text-zinc-300">No Active Media Selected</div>
                 <p className="text-[11px] text-zinc-500">
-                  Tap Generate or sync your <code>comfy_outputs/</code> folder below.
+                  Tap Generate or sync your <code>comfy_outputs</code> store below.
                 </p>
               </div>
             )}
           </div>
 
-          {/* 2. `comfy_outputs/` LOCAL FOLDER GALLERY WITH OPTIMIZED CAPPED LOOP */}
+          {/* 2. `comfy_outputs` PERSISTENT INDEXEDDB GALLERY WITH CAPPED LOOP */}
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <span className="text-xs font-bold uppercase tracking-wider text-zinc-200">
-                  comfy_outputs/
+                  comfy_outputs
                 </span>
                 <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-400">
                   Showing {visibleGalleryItems.length}/{comfyOutputsGallery.length}
@@ -240,7 +220,6 @@ function RightOutputsDrawer({
               </div>
 
               <div className="flex items-center gap-1">
-                {/* Capped Loop Limit Selector for Mobile Efficiency */}
                 <select
                   value={galleryLimit}
                   onChange={(e) => setGalleryLimit(Number(e.target.value))}
@@ -255,7 +234,7 @@ function RightOutputsDrawer({
                 <button
                   type="button"
                   onClick={onSyncComfyOutputsFolder}
-                  title="Sync outputs from ComfyUI /history"
+                  title="Sync missing outputs from ComfyUI /history into IndexedDB"
                   className="p-1.5 rounded-lg bg-zinc-800 active:bg-zinc-700 border border-zinc-700 text-emerald-400"
                 >
                   <FolderSync className="w-3.5 h-3.5" />
@@ -265,7 +244,7 @@ function RightOutputsDrawer({
                   <button
                     type="button"
                     onClick={onClearGallery}
-                    title="Clear cached gallery view"
+                    title="Clear IndexedDB gallery cache"
                     className="p-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-500 active:text-rose-400"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -276,7 +255,7 @@ function RightOutputsDrawer({
 
             {visibleGalleryItems.length === 0 ? (
               <div className="p-5 rounded-2xl bg-zinc-950/60 border border-zinc-800/80 text-center text-[11px] text-zinc-500">
-                <code>comfy_outputs/</code> is empty. Set Batch Count (1–4) and run a generation!
+                <code>comfy_outputs</code> IndexedDB store is empty. Set Batch Count (1–4) and tap Generate!
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2">

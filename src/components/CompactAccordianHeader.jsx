@@ -1,37 +1,15 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React from 'react';
 import {
-  Sparkles,
-  Play,
   FolderOpen,
-  Plus,
-  Download,
   Code2,
   RefreshCw,
-  Lock,
-  Dices,
   ChevronDown,
   ChevronUp,
-  ChevronLeft,
-  ChevronRight,
-  Image as ImageIcon,
-  Film,
-  Music,
   Terminal,
   HelpCircle,
-  Check,
-  Copy,
-  Layers,
-  Zap,
-  X,
-  FileJson,
-  FolderSync,
-  Trash2,
-  ExternalLink
+  X
 } from 'lucide-react';
 
-// ============================================================================
-// 4. MODULAR COMPONENT: COMPACT ACCORDION HEADER (Mobile-Only)
-// ============================================================================
 function CompactAccordionHeader({
   workflowCount,
   onToggleLeftDrawer,
@@ -50,7 +28,6 @@ function CompactAccordionHeader({
 }) {
   return (
     <header className="sticky top-0 z-30 bg-zinc-900/95 backdrop-blur-md border-b border-zinc-800 shrink-0">
-      {/* COLLAPSED BAR: Strictly Workflows Button, LED Status, Ping, and Accordion Toggle */}
       <div className="px-3 py-2 flex items-center justify-between gap-2">
         <button
           type="button"
@@ -65,7 +42,6 @@ function CompactAccordionHeader({
         </button>
 
         <div className="flex items-center gap-1.5">
-          {/* Live Red / Amber / Green LED Pill */}
           <div
             onClick={() => setIsExpanded((v) => !v)}
             className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 px-2.5 py-1.5 rounded-xl cursor-pointer"
@@ -106,7 +82,6 @@ function CompactAccordionHeader({
             </span>
           </div>
 
-          {/* Quick Ping Button */}
           <button
             type="button"
             onClick={onPing}
@@ -120,7 +95,6 @@ function CompactAccordionHeader({
             <span>Ping</span>
           </button>
 
-          {/* Accordion Expand / Collapse Button */}
           <button
             type="button"
             onClick={() => setIsExpanded((v) => !v)}
@@ -136,7 +110,6 @@ function CompactAccordionHeader({
         </div>
       </div>
 
-      {/* EXPANDABLE ACCORDION DRAWER: Endpoint Input, Dev Diagnostics, CORS & JSON Inspector */}
       <div
         className={`grid transition-all duration-300 ease-out ${
           isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'

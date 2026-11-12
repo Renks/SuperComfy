@@ -1,49 +1,28 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
-  Sparkles,
   Play,
-  FolderOpen,
-  Plus,
-  Download,
-  Code2,
-  RefreshCw,
-  Lock,
-  Dices,
-  ChevronDown,
-  ChevronUp,
   ChevronLeft,
-  ChevronRight,
-  Image as ImageIcon,
-  Film,
-  Music,
-  Terminal,
-  HelpCircle,
   Check,
   Copy,
-  Layers,
-  Zap,
-  X,
-  FileJson,
-  FolderSync,
-  Trash2,
-  ExternalLink
+  X
 } from 'lucide-react';
 import CompactAccordionHeader from './components/CompactAccordianHeader';
 import ManifestControlField from './components/ManifestControlField';
 import LeftWorkflowsDrawer from './components/LeftWorkflowsDrawer';
 import RightOutputsDrawer from './components/RightOutputsDrawer';
-// import { STARTER_MANIFEST_JSON, STARTER_WORKFLOW_API_JSON } from './components/StarterWorkflows';
 import STARTER_MANIFEST_JSON from './workflows/1.1 Starter - Text to Image (Z Image Turbo).manifest.json';
 import STARTER_WORKFLOW_API_JSON from './workflows/1.1 Starter - Text to Image (Z Image Turbo).json';
-import { generateClientId, detectMediaCategory, createSimulatedBatchSvgUrl } from './Utils';
+import {
+  generateClientId,
+  detectMediaCategory,
+  createSimulatedBatchSvgBlob,
+  comfyOutputDB
+} from './Utils';
 
-// ============================================================================
-// 8. MAIN MOBILE APPLICATION (Strictly Mobile-Only Layout)
-// ============================================================================
 export default function App() {
   // Step 0: Endpoint & Health State
-  const [endpointInput, setEndpointInput] = useState('http://127.0.0.1:8188');
-  const [cleanEndpoint, setCleanEndpoint] = useState('http://127.0.0.1:8188');
+  const [endpointInput, setEndpointInput] = useState('https://hoxabel--modal-comfyui-comfygpu-ui-dev.us-east.modal.run');
+  const [cleanEndpoint, setCleanEndpoint] = useState('https://hoxabel--modal-comfyui-comfygpu-ui-dev.us-east.modal.run');
   const [connectionStatus, setConnectionStatus] = useState('offline');
   const [statusMessage, setStatusMessage] = useState('Offline • Waiting for ComfyUI');
   const [latencyMs, setLatencyMs] = useState(null);
@@ -52,6 +31,7 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState({});
   const clientIdRef = useRef(generateClientId());
   const wsRef = useRef(null);
+  const lastRunMetaRef = useRef({ seed: null, resolution: '1920×1088' });
 
   // Step 1: Workflows Directory & Sliding Drawers State
   const [workflowLibrary, setWorkflowLibrary] = useState([
@@ -70,7 +50,7 @@ export default function App() {
   const [showCodeInspector, setShowCodeInspector] = useState(false);
   const [inspectorTab, setInspectorTab] = useState('compiled');
 
-  // Step 2: Dynamic Form & `comfy_outputs/` Gallery State
+  // Step 2: Dynamic Form & Persistent IndexedDB `comfy_outputs` Gallery State
   const [formValues, setFormValues] = useState({});
   const [seedRandomizeMap, setSeedRandomizeMap] = useState({});
   const [activeSection, setActiveSection] = useState('primary');
@@ -83,11 +63,10 @@ export default function App() {
     {
       time: new Date().toLocaleTimeString(),
       type: 'info',
-      msg: 'Initialized mobile SDUI with 1.1 Starter - Text to Image (Z Image Turbo).manifest.json'
+      msg: 'Initialized mobile SDUI + IndexedDB comfy_outputs store'
     }
   ]);
 
-  // `comfy_outputs/` gallery state + capped loop limit
   const [comfyOutputsGallery, setComfyOutputsGallery] = useState([]);
   const [activeMediaOutput, setActiveMediaOutput] = useState(null);
   const [galleryLimit, setGalleryLimit] = useState(12);
@@ -122,7 +101,25 @@ export default function App() {
     setSeedRandomizeMap(initialSeedRand);
   }, [activeEntry]);
 
-  // Live Compiled API JSON (Injects UI controls & prefixes SaveImage into `comfy_outputs/`)
+  // Load persisted blobs from IndexedDB (`comfy_outputs`) immediately on startup
+  useEffect(() => {
+    let mounted = true;
+    comfyOutputDB
+      .loadAllMedia(50)
+      .then((cachedItems) => {
+        if (!mounted || cachedItems.length === 0) return;
+        setComfyOutputsGallery(cachedItems);
+        setActiveMediaOutput((prev) => prev || cachedItems[0]);
+        addLog('info', `Restored ${cachedItems.length} media file(s) from local IndexedDB`);
+      })
+      .catch((err) => addLog('error', `IndexedDB load error: ${err.message}`));
+
+    return () => {
+      mounted = false;
+    };
+  }, [addLog]);
+
+  // Live Compiled API JSON (Leaves backend filename_prefix 100% untouched)
   const compiledWorkflowJson = useMemo(() => {
     if (!activeEntry) return {};
     const clone = JSON.parse(JSON.stringify(activeEntry.workflowApi));
@@ -139,61 +136,85 @@ export default function App() {
         node.inputs[hKey] = Number(val.height);
       } else if (ctrl.target_field) {
         const fieldKey = ctrl.target_field.replace('inputs.', '');
-        if (fieldKey === 'filename_prefix') {
-          const cleanPrefix = String(val || 'comfyui-output').replace(/^comfy_outputs[\\/]/, '');
-          node.inputs[fieldKey] = `comfy_outputs/${cleanPrefix}`;
-        } else {
-          node.inputs[fieldKey] = val;
-        }
+        node.inputs[fieldKey] = val;
       }
     });
 
     return clone;
   }, [activeEntry, formValues]);
 
-  // Extract single or multi-batch media outputs from ComfyUI `/history` response
-  const extractMediaFromHistoryJob = useCallback((baseUrl, promptId, job) => {
-    if (!job || !job.outputs) return [];
-    const extracted = [];
+  // Download media outputs from a ComfyUI `/history` job as binary Blobs and store in IndexedDB
+  const downloadAndCacheJobOutputs = useCallback(
+    async (baseUrl, promptId, job) => {
+      if (!job || !job.outputs) return [];
+      const savedItems = [];
 
-    Object.entries(job.outputs).forEach(([nodeId, nodeOut]) => {
-      const buckets = [
-        ...(nodeOut.images || []),
-        ...(nodeOut.gifs || []),
-        ...(nodeOut.videos || []),
-        ...(nodeOut.audio || [])
-      ];
+      for (const [nodeId, nodeOut] of Object.entries(job.outputs)) {
+        const buckets = [
+          ...(nodeOut.images || []),
+          ...(nodeOut.gifs || []),
+          ...(nodeOut.videos || []),
+          ...(nodeOut.audio || [])
+        ];
 
-      buckets.forEach((item, idx) => {
-        if (item && item.filename) {
-          const subfolder = item.subfolder || 'comfy_outputs';
+        for (let idx = 0; idx < buckets.length; idx++) {
+          const item = buckets[idx];
+          if (!item || !item.filename) continue;
+
+          const itemId = `${promptId}-${nodeId}-${idx}-${item.filename}`;
+
+          // 1. Check if already cached in IndexedDB
+          const existing = await comfyOutputDB.getById(itemId);
+          if (existing && existing.blob) {
+            savedItems.push({
+              ...existing,
+              url: URL.createObjectURL(existing.blob)
+            });
+            continue;
+          }
+
+          // 2. Fetch raw binary Blob from ComfyUI `/view` endpoint
           const params = new URLSearchParams({
             filename: item.filename,
             subfolder: item.subfolder || '',
             type: item.type || 'output'
           });
-          const mediaUrl = `${baseUrl}/view?${params.toString()}`;
-          extracted.push({
-            id: `${promptId}-${nodeId}-${idx}-${item.filename}`,
+          const viewUrl = `${baseUrl}/view?${params.toString()}`;
+
+          const response = await fetch(viewUrl);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch /view for ${item.filename} (HTTP ${response.status})`);
+          }
+
+          const mediaBlob = await response.blob();
+          const record = {
+            id: itemId,
             promptId,
             nodeId,
             filename: item.filename,
             folderPath: `comfy_outputs/${item.filename}`,
-            subfolder,
-            url: mediaUrl,
+            subfolder: item.subfolder || '',
             kind: detectMediaCategory(item.filename),
+            blob: mediaBlob,
+            seed: lastRunMetaRef.current.seed,
+            resolution: lastRunMetaRef.current.resolution,
             batchIndex: idx + 1,
             batchTotal: buckets.length,
-            timestamp: new Date().toLocaleTimeString()
-          });
+            timestamp: new Date().toLocaleTimeString(),
+            createdAt: Date.now() + idx
+          };
+
+          const storedWithUrl = await comfyOutputDB.saveMediaBlob(record);
+          savedItems.push(storedWithUrl);
         }
-      });
-    });
+      }
 
-    return extracted;
-  }, []);
+      return savedItems;
+    },
+    []
+  );
 
-  // Fetch specific promptId output from `/history/{promptId}`
+  // Fetch specific promptId output from `/history/{promptId}` and store Blobs in IndexedDB
   const fetchHistoryOutput = useCallback(
     async (baseUrl, promptId) => {
       try {
@@ -201,13 +222,15 @@ export default function App() {
         if (!res.ok) return false;
         const historyData = await res.json();
         const job = historyData[promptId];
-        const extractedMedia = extractMediaFromHistoryJob(baseUrl, promptId, job);
+        if (!job || !job.outputs) return false;
 
-        if (extractedMedia.length > 0) {
-          setActiveMediaOutput(extractedMedia[0]);
+        const storedMedia = await downloadAndCacheJobOutputs(baseUrl, promptId, job);
+
+        if (storedMedia.length > 0) {
+          setActiveMediaOutput(storedMedia[0]);
           setComfyOutputsGallery((prev) => {
             const existingIds = new Set(prev.map((p) => p.id));
-            const fresh = extractedMedia.filter((m) => !existingIds.has(m.id));
+            const fresh = storedMedia.filter((m) => !existingIds.has(m.id));
             return [...fresh, ...prev];
           });
           setIsGenerating(false);
@@ -215,54 +238,50 @@ export default function App() {
           setShowRightDrawer(true);
           addLog(
             'success',
-            `Fetched ${extractedMedia.length} media file(s) into comfy_outputs/`
+            `Saved ${storedMedia.length} binary Blob(s) into local comfy_outputs IndexedDB`
           );
           return true;
         }
         return false;
-      } catch (_) {
+      } catch (err) {
+        addLog('error', `Output blob fetch error: ${err.message}`);
         return false;
       }
     },
-    [extractMediaFromHistoryJob, addLog]
+    [downloadAndCacheJobOutputs, addLog]
   );
 
-  // Sync recent outputs from ComfyUI `/history` into `comfy_outputs/` gallery
+  // Sync recent outputs from ComfyUI `/history` into local IndexedDB `comfy_outputs`
   const handleSyncComfyOutputsFolder = useCallback(async () => {
     if (connectionStatus !== 'online' && connectionStatus !== 'http_only') {
-      addLog('info', 'Endpoint offline: Showing local comfy_outputs/ items in memory.');
+      const localItems = await comfyOutputDB.loadAllMedia(50);
+      setComfyOutputsGallery(localItems);
+      addLog('info', `Endpoint offline: Loaded ${localItems.length} cached file(s) from IndexedDB`);
       return;
     }
+
     try {
       const res = await fetch(`${cleanEndpoint}/history`);
       if (!res.ok) return;
       const allHistory = await res.json();
-      const collected = [];
-      Object.entries(allHistory)
-        .reverse()
-        .slice(0, galleryLimit)
-        .forEach(([pId, job]) => {
-          const items = extractMediaFromHistoryJob(cleanEndpoint, pId, job);
-          collected.push(...items);
-        });
+      const entries = Object.entries(allHistory).reverse().slice(0, galleryLimit);
 
-      if (collected.length > 0) {
-        setComfyOutputsGallery((prev) => {
-          const seen = new Set();
-          const merged = [...collected, ...prev].filter((item) => {
-            if (seen.has(item.id)) return false;
-            seen.add(item.id);
-            return true;
-          });
-          return merged;
-        });
-        if (!activeMediaOutput) setActiveMediaOutput(collected[0]);
-        addLog('success', `Synced ${collected.length} files from ComfyUI into comfy_outputs/`);
+      let newlySyncedCount = 0;
+      for (const [pId, job] of entries) {
+        const items = await downloadAndCacheJobOutputs(cleanEndpoint, pId, job);
+        newlySyncedCount += items.length;
       }
+
+      const allCached = await comfyOutputDB.loadAllMedia(50);
+      setComfyOutputsGallery(allCached);
+      if (!activeMediaOutput && allCached.length > 0) {
+        setActiveMediaOutput(allCached[0]);
+      }
+      addLog('success', `Synced ${newlySyncedCount} media item(s) into comfy_outputs IndexedDB`);
     } catch (err) {
-      addLog('error', `Folder sync failed: ${err.message}`);
+      addLog('error', `History sync failed: ${err.message}`);
     }
-  }, [connectionStatus, cleanEndpoint, galleryLimit, extractMediaFromHistoryJob, activeMediaOutput, addLog]);
+  }, [connectionStatus, cleanEndpoint, galleryLimit, downloadAndCacheJobOutputs, activeMediaOutput, addLog]);
 
   // Step 0: Ping Endpoint + Connect WebSocket
   const checkEndpointAndConnect = useCallback(
@@ -363,11 +382,11 @@ export default function App() {
     const timer = setInterval(async () => {
       const done = await fetchHistoryOutput(cleanEndpoint, activePromptId);
       if (done) clearInterval(timer);
-    }, 1600);
+    }, 1800);
     return () => clearInterval(timer);
   }, [isGenerating, activePromptId, connectionStatus, cleanEndpoint, fetchHistoryOutput]);
 
-  // Execute Workflow (Supports Multi-Batch Output into `comfy_outputs/`)
+  // Execute Workflow (Leaves SaveImage untouched, downloads result as Blob into IndexedDB)
   const handleRunWorkflow = async () => {
     const nextValues = { ...formValues };
     activeEntry.manifest.controls.forEach((ctrl) => {
@@ -389,24 +408,27 @@ export default function App() {
         node.inputs[hKey] = Number(val.height);
       } else if (ctrl.target_field) {
         const fieldKey = ctrl.target_field.replace('inputs.', '');
-        if (fieldKey === 'filename_prefix') {
-          const cleanPrefix = String(val || 'comfyui-output').replace(/^comfy_outputs[\\/]/, '');
-          node.inputs[fieldKey] = `comfy_outputs/${cleanPrefix}`;
-        } else {
-          node.inputs[fieldKey] = val;
-        }
+        node.inputs[fieldKey] = val;
       }
     });
 
     const totalSteps = Number(nextValues.steps || 8);
     const batchCount = Math.max(1, Number(nextValues.batch_size || 1));
+    const width = nextValues.aspect_ratio?.width || 1920;
+    const height = nextValues.aspect_ratio?.height || 1088;
+
+    lastRunMetaRef.current = {
+      seed: nextValues.seed,
+      resolution: `${width}×${height}`
+    };
+
     setIsGenerating(true);
     setProgressStep({ value: 0, max: totalSteps });
     setExecutingNodeId('30:44');
 
     if (connectionStatus === 'online' || connectionStatus === 'http_only') {
       try {
-        addLog('info', `POST /prompt (Batch size: ${batchCount} -> comfy_outputs/)`);
+        addLog('info', `POST /prompt (Batch size: ${batchCount})`);
         const res = await fetch(`${cleanEndpoint}/prompt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -426,10 +448,10 @@ export default function App() {
         addLog('error', `POST /prompt failed: ${err.message}`);
       }
     } else {
-      // Sandbox Batch Simulation -> Generates `batchCount` items into `comfy_outputs/`
-      addLog('info', `Simulating batch of ${batchCount} media item(s) into comfy_outputs/...`);
+      // Sandbox Batch Simulation -> Saves real SVG Blobs into IndexedDB `comfy_outputs`
+      addLog('info', `Simulating batch of ${batchCount} Blob(s) into IndexedDB...`);
       let step = 0;
-      const interval = setInterval(() => {
+      const interval = setInterval(async () => {
         step += 1;
         setProgressStep({ value: step, max: totalSteps });
         if (step >= totalSteps) {
@@ -437,17 +459,22 @@ export default function App() {
           setIsGenerating(false);
           setExecutingNodeId(null);
 
-          const width = nextValues.aspect_ratio?.width || 1920;
-          const height = nextValues.aspect_ratio?.height || 1088;
-          const basePrefix = String(nextValues.filename_prefix || 'comfyui-editorial').replace(
-            /^comfy_outputs[\\/]/,
-            ''
-          );
+          const basePrefix = String(nextValues.filename_prefix || 'comfyui-editorial');
+          const storedBatch = [];
 
-          const generatedBatch = Array.from({ length: batchCount }, (_, idx) => {
+          for (let idx = 0; idx < batchCount; idx++) {
             const itemSeed = Number(nextValues.seed || 1000) + idx;
-            const filename = `${basePrefix}_${String(Date.now()).slice(-4)}_0${idx + 1}.png`;
-            return {
+            const filename = `${basePrefix}_${String(Date.now()).slice(-4)}_0${idx + 1}.svg`;
+            const svgBlob = createSimulatedBatchSvgBlob({
+              promptText: nextValues.prompt_text,
+              seed: itemSeed,
+              batchIndex: idx,
+              batchTotal: batchCount,
+              width,
+              height
+            });
+
+            const savedItem = await comfyOutputDB.saveMediaBlob({
               id: `sim-${Date.now()}-${idx}`,
               promptId: 'sandbox-batch',
               nodeId: '76',
@@ -455,26 +482,22 @@ export default function App() {
               folderPath: `comfy_outputs/${filename}`,
               kind: 'image',
               isSimulated: true,
-              url: createSimulatedBatchSvgUrl({
-                promptText: nextValues.prompt_text,
-                seed: itemSeed,
-                batchIndex: idx,
-                batchTotal: batchCount,
-                width,
-                height
-              }),
+              blob: svgBlob,
               seed: itemSeed,
               resolution: `${width}×${height}`,
               batchIndex: idx + 1,
               batchTotal: batchCount,
-              timestamp: new Date().toLocaleTimeString()
-            };
-          });
+              timestamp: new Date().toLocaleTimeString(),
+              createdAt: Date.now() + idx
+            });
 
-          setActiveMediaOutput(generatedBatch[0]);
-          setComfyOutputsGallery((prev) => [...generatedBatch, ...prev]);
+            storedBatch.push(savedItem);
+          }
+
+          setActiveMediaOutput(storedBatch[0]);
+          setComfyOutputsGallery((prev) => [...storedBatch, ...prev]);
           setShowRightDrawer(true);
-          addLog('success', `Saved ${batchCount} file(s) to comfy_outputs/ gallery`);
+          addLog('success', `Saved ${batchCount} simulated Blob(s) into IndexedDB comfy_outputs`);
         }
       }, 180);
     }
@@ -569,7 +592,7 @@ export default function App() {
         onDownloadManifest={handleDownloadManifest}
       />
 
-      {/* 3. RIGHT SLIDING OUTPUT VIEWPORT & `comfy_outputs` GALLERY DRAWER */}
+      {/* 3. RIGHT SLIDING OUTPUT VIEWPORT & `comfy_outputs` INDEXEDDB GALLERY DRAWER */}
       <RightOutputsDrawer
         isOpen={showRightDrawer}
         onToggle={() => setShowRightDrawer((v) => !v)}
@@ -584,13 +607,15 @@ export default function App() {
         galleryLimit={galleryLimit}
         setGalleryLimit={setGalleryLimit}
         onSyncComfyOutputsFolder={handleSyncComfyOutputsFolder}
-        onClearGallery={() => {
+        onClearGallery={async () => {
+          await comfyOutputDB.clearAll();
           setComfyOutputsGallery([]);
           setActiveMediaOutput(null);
+          addLog('info', 'Cleared all cached media Blobs from IndexedDB');
         }}
       />
 
-      {/* 4. MAIN FULL-BLEED MOBILE CONTENT (No Fake Phone Frame) */}
+      {/* 4. MAIN FULL-BLEED MOBILE CONTENT */}
       <main className="flex-1 overflow-y-auto flex flex-col">
         {/* Compact Workflow Title Strip */}
         <div className="px-3.5 pt-3 pb-2.5 border-b border-zinc-900 bg-zinc-950">

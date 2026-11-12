@@ -1,37 +1,12 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React from 'react';
 import {
-  Sparkles,
-  Play,
-  FolderOpen,
   Plus,
   Download,
-  Code2,
-  RefreshCw,
-  Lock,
-  Dices,
-  ChevronDown,
-  ChevronUp,
-  ChevronLeft,
-  ChevronRight,
-  Image as ImageIcon,
-  Film,
-  Music,
-  Terminal,
-  HelpCircle,
-  Check,
-  Copy,
   Layers,
-  Zap,
   X,
-  FileJson,
-  FolderSync,
-  Trash2,
-  ExternalLink
+  FileJson
 } from 'lucide-react';
 
-// ============================================================================
-// 6. MODULAR COMPONENT: LEFT SLIDING WORKFLOWS DRAWER (With Smooth Transitions)
-// ============================================================================
 function LeftWorkflowsDrawer({
   isOpen,
   onClose,
@@ -43,7 +18,6 @@ function LeftWorkflowsDrawer({
 }) {
   return (
     <>
-      {/* Backdrop */}
       <div
         onClick={onClose}
         className={`fixed inset-0 z-40 bg-black/75 backdrop-blur-xs transition-opacity duration-300 ${
@@ -51,7 +25,6 @@ function LeftWorkflowsDrawer({
         }`}
       />
 
-      {/* Sliding Left Panel */}
       <aside
         className={`fixed inset-y-0 left-0 z-50 w-[84vw] max-w-[320px] bg-zinc-900 border-r border-zinc-800 flex flex-col shadow-2xl transition-transform duration-300 ease-out ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
